@@ -236,7 +236,7 @@ class WhisperDaemon:
     def _type_text(self, text):
         """Type text using wtype"""
         try:
-            subprocess.run(['wtype', text], check=True, timeout=5)
+            subprocess.run(['wtype', '-'], input=text, text=True, check=True, timeout=5)
             logger.info("Text typed successfully")
         except FileNotFoundError:
             logger.error("wtype not found - install it for auto-typing")
