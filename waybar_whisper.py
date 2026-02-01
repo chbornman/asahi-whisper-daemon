@@ -41,26 +41,27 @@ def update_icons():
     
     # Streaming mode overrides server/CLI mode
     if is_streaming():
-        icon = "▶"
+        icon = "〰 streaming"
         ICONS = {
             "ready": icon,
-            "recording": f"{icon} streaming",
-            "processing": f"{icon} streaming",
-            "error": icon
+            "recording": icon,
+            "processing": icon,
+            "error": "〰"
         }
-        RECORDING_FRAMES = [f"{icon} streaming"] * 4
+        RECORDING_FRAMES = [icon] * 4
     else:
         is_server = get_server_mode()
-        icon = "◆" if is_server else "●"
+        ready_icon = "◆" if is_server else "🎙"
+        recording_icon = "◆" if is_server else "●"
         
         ICONS = {
-            "ready": icon,
-            "recording": f"{icon} dictation",
+            "ready": ready_icon,
+            "recording": f"{recording_icon} dictation",
             "processing": "dictation",
-            "error": icon
+            "error": ready_icon
         }
         
-        RECORDING_FRAMES = [f"{icon} dictation"] * 4
+        RECORDING_FRAMES = [f"{recording_icon} dictation"] * 4
 
 
 def get_current_model():

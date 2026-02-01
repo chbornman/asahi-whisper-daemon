@@ -27,6 +27,11 @@
     opacity: 0.5;
 }
 
+#custom-whisper.streaming {
+    color: #ff0000;
+    background-color: #1a1a1a;
+}
+
 @keyframes pulse {
     0% {
         opacity: 1;

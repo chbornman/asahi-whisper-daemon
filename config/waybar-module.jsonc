@@ -3,7 +3,7 @@
         "exec": "~/projects/asahi-whisper-daemon/waybar_whisper.py",
         "return-type": "json",
         "format": "{}",
-        "on-click": "~/projects/asahi-whisper-daemon/toggle_dictation.sh",
+        "on-click": "~/projects/asahi-whisper-daemon/toggle_stream.sh",
         "on-click-right": "~/projects/asahi-whisper-daemon/switch_model.sh",
         "tooltip": true
     }

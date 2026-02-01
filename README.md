@@ -7,20 +7,29 @@ Voice dictation system using whisper.cpp for Asahi Linux on Apple Silicon.
 
 ## Features
 
-- 🎤 **SUPER+D keybinding** - Toggle recording with a single key
-- 📊 **Waybar integration** - Animated visual status indicator
-- 🔊 **Audio feedback** - Snare sound on start, hihat on stop
-- ⚡ **Fast transcription** - 11.5x faster than real-time
-- 💾 **Low memory** - ~200-300 MB (vs 3GB for large models)
+- 🎤 **Three dictation modes**:
+  - **CLI Mode (●)** - Press-to-record (SUPER+D)
+  - **Server Mode (◆)** - Model stays in memory for faster transcription
+  - **Stream Mode (▶)** - Live transcription with Voice Activity Detection
+- 📊 **Waybar integration** - Visual mode and status indicators
+- 🔊 **Audio feedback** - Snare/hihat sounds for start/stop
+- ⚡ **Fast transcription** - 11.5x faster than real-time (base.en)
+- 🎛️ **Interactive model switcher** - Right-click menu to change models
+- 💾 **Flexible memory usage** - 300 MB (CLI) to 1.7 GB (Server with large models)
 - 🚀 **Auto-start** - Systemd service starts on boot
-- 🎯 **Optimized for M1/M2** - ARM NEON, FP16, DOTPROD instructions
+- 🎯 **Optimized for M1/M2/M3/M4** - ARM NEON, FP16, DOTPROD instructions
 
 ## Demo
 
-**Waybar Indicator States:**
-- `●` (gray) - Ready to record
-- `● dictation` (red, golden background) - Currently recording
-- `dictation` (dark text, golden background) - Processing
+**Waybar Indicator Modes:**
+- `●` - CLI mode (loads model each time)
+- `◆` - Server mode (model in memory)
+- `▶` - Stream mode (live transcription active)
+
+**States:**
+- `● dictation` - Currently recording
+- `dictation` - Processing transcription
+- `▶ streaming` - Live streaming active
 
 ## Requirements
 
@@ -95,35 +104,103 @@ Options:
 
 ## Usage
 
-### Basic Dictation
+### Three Dictation Modes
+
+The daemon supports three different modes for different use cases:
+
+| Mode | Icon | Keybind | Best For |
+|------|------|---------|----------|
+| **Stream Mode** | ▶ | SUPER+D (toggle stream) | Live transcription as you speak |
+| **CLI Mode** | ● | SUPER+Shift+D (toggle recording) | Quick dictation, lower memory usage |
+| **Server Mode** | ◆ | Via menu only | Faster transcription with larger models |
+
+### 1. Live Streaming Mode (▶) - Default
+
+Real-time transcription as you speak using Voice Activity Detection (VAD):
+
+1. **Press SUPER+D** to start streaming
+   - Waybar shows: `▶` 
+   - Hear: snare sound
+2. **Start speaking** - just talk naturally
+3. **Pause** - VAD detects silence and transcribes
+4. **Text appears** automatically after each pause
+5. **Press SUPER+D** again to stop streaming
+   - Hear: hihat sound
+
+**Streaming Mode Details:**
+- Uses `base.en` model (optimized for speed)
+- 30-second audio buffer with VAD
+- Types complete sentences after pauses
+- No need to press keys while speaking
+- Great for long-form dictation
+
+### 2. Basic Dictation (CLI Mode) - SUPER+Shift+D
+
+Press-to-record mode for quick dictation:
 
 1. **Open any text field** (editor, browser, terminal, etc.)
-2. **Press SUPER+D** to start recording
+2. **Press SUPER+Shift+D** to start recording
    - Waybar shows: `● dictation` (red, golden background)
    - Hear: snare sound (drum hit)
 3. **Speak clearly**: "This is a test of the whisper dictation system"
-4. **Press SUPER+D** again to stop
+4. **Press SUPER+Shift+D** again to stop
    - Waybar shows: `dictation` (processing)
    - Hear: hihat sound
 5. **Wait ~1-2 seconds** → Text appears where your cursor is!
 
+### 3. Server Mode (◆)
+
+Keeps the whisper model loaded in memory for faster transcription:
+
+- **Enable**: Right-click waybar → "Toggle to Server mode"
+- **Benefits**: Faster transcription (no model loading time), better for larger models
+- **Trade-off**: Uses more RAM (~577 MB for small.en, ~1.7 GB for large-v3-turbo)
+- **Usage**: Same as CLI mode (SUPER+Shift+D), but faster
+
+**Streaming Mode Details:**
+- Uses `base.en` model (optimized for speed)
+- 30-second audio buffer with VAD
+- Types complete sentences after pauses
+- No need to press keys while speaking
+- Great for long-form dictation
+
 ### Waybar Indicator
 
-The indicator in your waybar changes to show the current state:
+The indicator shows the current mode and state:
 
-| Display | Color | Meaning |
-|---------|-------|---------|
-| ● | Gray | Ready to record |
-| ● dictation | Red text, gold bg | Recording your voice |
-| dictation | Dark text, gold bg | Processing transcription |
-| ● | Gray (faded) | Error - daemon not running |
+| Icon | Mode | State | Meaning |
+|------|------|-------|---------|
+| ● | CLI | Ready | Ready to record (SUPER+D to start) |
+| ● dictation | CLI | Recording | Recording your voice |
+| dictation | CLI | Processing | Transcribing audio |
+| ◆ | Server | Ready | Model in memory, ready to record |
+| ◆ dictation | Server | Recording | Recording (faster transcription) |
+| ▶ | Stream | Active | Live streaming mode active |
 
 ### Controls
 
-- **SUPER+D** - Toggle recording (start/stop)
-- **Left-click waybar indicator** - Toggle recording
-- **Right-click waybar indicator** - Switch models
-- **Hover waybar indicator** - See current model and status
+- **SUPER+D** - Toggle live streaming mode (▶)
+- **SUPER+Shift+D** - Toggle recording (CLI ● or Server ◆ mode)
+- **Left-click waybar** - Same as SUPER+D (toggle streaming)
+- **Right-click waybar** - Open model/mode menu
+- **Hover waybar** - See current model, mode, and controls
+
+### Which Mode Should I Use?
+
+| Use Case | Recommended Mode | Why |
+|----------|------------------|-----|
+| Quick notes, commands | **CLI Mode (●)** | Low memory, good enough accuracy |
+| Frequent dictation sessions | **Server Mode (◆)** | Faster, no model loading delay |
+| Long-form writing, transcription | **Stream Mode (▶)** | Hands-free, natural flow |
+| Professional documents | **Server Mode (◆)** with `small.en` or `medium.en` | Better accuracy, still fast |
+| Maximum accuracy | **Server Mode (◆)** with `large-v3-turbo` | Best quality (~14s per transcription) |
+
+**Memory Usage Comparison:**
+- CLI mode: ~300 MB (only during transcription)
+- Server mode with base.en: ~577 MB (persistent)
+- Server mode with small.en: ~577 MB (persistent)  
+- Server mode with large-v3-turbo: ~1.7 GB (persistent)
+- Stream mode: ~300 MB (uses base.en, only while streaming)
 
 ## Configuration
 
@@ -210,18 +287,52 @@ systemctl --user daemon-reload
 systemctl --user restart whisper.service
 ```
 
+### Streaming Mode Requirements
+
+Streaming mode requires SDL2 to be installed and whisper.cpp to be built with SDL2 support:
+
+```bash
+# Install SDL2
+sudo dnf install SDL2 SDL2-devel
+
+# Rebuild whisper.cpp with SDL2 support
+cd ~/projects/whisper.cpp
+rm -rf build
+cmake -B build -DWHISPER_SDL2=ON
+cmake --build build --config Release
+```
+
+After rebuilding, `whisper-stream` will be available and streaming mode will work.
+
+### Tuning Streaming Mode
+
+You can adjust VAD sensitivity by editing `toggle_stream.sh`:
+
+```bash
+# More sensitive (triggers on shorter pauses)
+-vth 0.7
+
+# Less sensitive (waits for longer silence) - default
+-vth 0.6
+
+# Much less sensitive (good for continuous speech)
+-vth 0.5
+```
+
 ### Customizing Waybar Indicator
 
 **Change the text/icons:**
 
 Edit `waybar_whisper.py`:
 ```python
-ICONS = {
-    "ready": "MIC",           # Change from ●
-    "recording": "REC",       # Change from ● dictation
-    "processing": "...",      # Change from dictation
-    "error": "ERR"
-}
+# CLI mode icon
+icon = "●"
+
+# Server mode icon  
+icon = "◆"
+
+# Stream mode icon
+icon = "▶"
 ```
 
 **Change colors:**
