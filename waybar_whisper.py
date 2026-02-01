@@ -51,7 +51,7 @@ def update_icons():
         RECORDING_FRAMES = [icon] * 4
     else:
         is_server = get_server_mode()
-        ready_icon = "◆" if is_server else "🎙"
+        ready_icon = "◆" if is_server else "〰"
         recording_icon = "◆" if is_server else "●"
         
         ICONS = {

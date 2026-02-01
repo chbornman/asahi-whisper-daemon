@@ -33,14 +33,13 @@ if [ -f "$STREAM_FLAG" ]; then
 else
     # Start streaming
     
-    # Play start sound and wait for it to finish
-    if [ -f "$SOUND_DIR/snare.wav" ]; then
-        pw-play "$SOUND_DIR/snare.wav"
-        sleep 0.3  # Wait for sound to finish
-    fi
-    
-    # Create flag
+    # Create flag first
     touch "$STREAM_FLAG"
+    
+    # Play start sound in background (don't wait)
+    if [ -f "$SOUND_DIR/snare.wav" ]; then
+        pw-play "$SOUND_DIR/snare.wav" &
+    fi
     
     # Start whisper-stream in background
     # VAD mode: --step 0 means wait for speech, -vth 0.6 is voice threshold
@@ -50,35 +49,164 @@ else
             -m "$MODEL" \
             --step 0 \
             --length 30000 \
-            --keep 0 \
+            --keep 200 \
             -vth 0.6 \
-            -t 4 \
+            -t 8 \
             2>/tmp/whisper_stream.log \
+            | tee /tmp/whisper_stream_output.log \
             | {
-                last_text=""
+                previous_full_text=""
+                current_full_text=""
                 in_transcription=false
+                last_transcription_time=0
                 
                 while IFS= read -r line; do
                     # Detect start of transcription block
                     if echo "$line" | grep -q "^### Transcription.*START"; then
                         in_transcription=true
-                        last_text=""
+                        current_full_text=""
+                        
+                        # Extract timestamps to detect long silence gaps
+                        # Format: ### Transcription N START | t0 = 123 ms | t1 = 456 ms
+                        if echo "$line" | grep -q "t0 ="; then
+                            current_t0=$(echo "$line" | sed -n 's/.*t0 = \([0-9]*\) ms.*/\1/p')
+                            current_t1=$(echo "$line" | sed -n 's/.*t1 = \([0-9]*\) ms.*/\1/p')
+                            
+                            # Check if there was a long silence (10+ seconds = 10000ms)
+                            # Gap is measured from when last transcription ended (t1) to when this one started (t0)
+                            if [ -n "$last_transcription_time" ] && [ "$last_transcription_time" -gt 0 ]; then
+                                silence_gap=$((current_t0 - last_transcription_time))
+                                if [ "$silence_gap" -gt 10000 ]; then
+                                    echo "[DEBUG] Long silence detected (${silence_gap}ms), resetting context" >> /tmp/whisper_stream_debug.log
+                                    previous_full_text=""
+                                fi
+                            fi
+                            
+                            # Update last transcription time to current t1 (end of this block)
+                            last_transcription_time="$current_t1"
+                        fi
                     # Detect end of transcription block
                     elif echo "$line" | grep -q "^### Transcription.*END"; then
                         in_transcription=false
-                        # Type the last captured text from this block
-                        if [ -n "$last_text" ]; then
-                            wtype "$last_text "
+                        
+                        # Extract t1 from the previous START line for silence detection
+                        # (We already captured it when we saw the START line)
+                        
+                        # Remove the previously typed portion to get only NEW text
+                        if [ -n "$current_full_text" ]; then
+                            # Debug logging
+                            echo "[DEBUG] current_full_text: '$current_full_text'" >> /tmp/whisper_stream_debug.log
+                            echo "[DEBUG] previous_full_text: '$previous_full_text'" >> /tmp/whisper_stream_debug.log
+                            
+                            if [ -n "$previous_full_text" ]; then
+                                # Smart diff: Find longest common suffix of previous with prefix of current
+                                # This handles buffer shifts where the beginning is dropped
+                                
+                                # First try simple prefix match (fastest)
+                                if [[ "$current_full_text" == "$previous_full_text"* ]]; then
+                                    new_text="${current_full_text#"$previous_full_text"}"
+                                    # Trim whitespace
+                                    new_text="${new_text#"${new_text%%[![:space:]]*}"}"
+                                    new_text="${new_text%"${new_text##*[![:space:]]}"}"
+                                    echo "[DEBUG] Simple prefix match, new_text: '$new_text'" >> /tmp/whisper_stream_debug.log
+                                else
+                                    # Prefix doesn't match - find overlap using fuzzy word-based matching
+                                    # Strip punctuation from words for comparison, but keep original text
+                                    
+                                    # Split previous and current into words
+                                    IFS=' ' read -ra prev_words <<< "$previous_full_text"
+                                    IFS=' ' read -ra curr_words <<< "$current_full_text"
+                                    overlap_found=false
+                                    
+                                    # Try to find the longest suffix of previous that matches a prefix of current
+                                    # We'll do fuzzy matching by comparing words without trailing punctuation
+                                    for (( i=${#prev_words[@]}-1; i>=0; i-- )); do
+                                        # Extract suffix of previous words starting at position i
+                                        prev_suffix_words=("${prev_words[@]:i}")
+                                        prev_suffix_len=${#prev_suffix_words[@]}
+                                        
+                                        # Check if current has enough words to match
+                                        if [ "$prev_suffix_len" -gt "${#curr_words[@]}" ]; then
+                                            continue
+                                        fi
+                                        
+                                        # Compare the suffix words with current words (fuzzy match on punctuation)
+                                        match=true
+                                        for (( j=0; j<prev_suffix_len; j++ )); do
+                                            # Strip trailing punctuation for comparison
+                                            prev_word="${prev_suffix_words[j]}"
+                                            curr_word="${curr_words[j]}"
+                                            prev_word_clean="${prev_word//[.,;:!?\"\']}"
+                                            curr_word_clean="${curr_word//[.,;:!?\"\']}"
+                                            
+                                            if [ "$prev_word_clean" != "$curr_word_clean" ]; then
+                                                match=false
+                                                break
+                                            fi
+                                        done
+                                        
+                                        if [ "$match" = true ]; then
+                                            # Found fuzzy match! Calculate how many words to skip in current
+                                            # Reconstruct the actual overlapping text from current (preserving punctuation)
+                                            overlap_words=("${curr_words[@]:0:prev_suffix_len}")
+                                            remaining_words=("${curr_words[@]:prev_suffix_len}")
+                                            
+                                            # Join remaining words back into text
+                                            new_text="${remaining_words[*]}"
+                                            new_text="${new_text#"${new_text%%[![:space:]]*}"}"
+                                            new_text="${new_text%"${new_text##*[![:space:]]}"}"
+                                            overlap_found=true
+                                            echo "[DEBUG] Found fuzzy overlap at word $i (${prev_suffix_len} words matched) -> new_text: '$new_text'" >> /tmp/whisper_stream_debug.log
+                                            break
+                                        fi
+                                    done
+                                    
+                                    if [ "$overlap_found" = false ]; then
+                                        # No overlap found - type everything (buffer completely shifted)
+                                        new_text="$current_full_text"
+                                        echo "[DEBUG] No overlap found, typing everything: '$new_text'" >> /tmp/whisper_stream_debug.log
+                                    fi
+                                fi
+                            else
+                                # No previous text - type everything
+                                new_text="$current_full_text"
+                                echo "[DEBUG] First transcription, typing everything: '$new_text'" >> /tmp/whisper_stream_debug.log
+                            fi
+                            
+                            # Type the new text
+                            if [ -n "$new_text" ]; then
+                                echo "[DEBUG] Typing: '$new_text '" >> /tmp/whisper_stream_debug.log
+                                if wtype "$new_text " 2>> /tmp/whisper_stream_debug.log; then
+                                    echo "[DEBUG] wtype succeeded" >> /tmp/whisper_stream_debug.log
+                                else
+                                    echo "[DEBUG] wtype FAILED with exit code $?" >> /tmp/whisper_stream_debug.log
+                                fi
+                            else
+                                echo "[DEBUG] new_text is empty, skipping wtype" >> /tmp/whisper_stream_debug.log
+                            fi
+                            
+                            # Update previous text for next iteration
+                            previous_full_text="$current_full_text"
                         fi
-                        last_text=""
                     # Capture timestamp lines (actual transcriptions)
                     elif [ "$in_transcription" = true ] && echo "$line" | grep -q "^\[.*\]"; then
                         # Extract text after the timestamp bracket
                         text=$(echo "$line" | sed 's/^\[.*\] *//')
-                        text=$(echo "$text" | xargs)
-                        # Keep updating last_text (we want the final/longest one)
+                        # Trim leading/trailing whitespace without xargs (which breaks on quotes)
+                        text="${text#"${text%%[![:space:]]*}"}"  # Remove leading whitespace
+                        text="${text%"${text##*[![:space:]]}"}"  # Remove trailing whitespace
+                        
+                        echo "[DEBUG] Captured timestamp line: '$line'" >> /tmp/whisper_stream_debug.log
+                        echo "[DEBUG] Extracted text: '$text'" >> /tmp/whisper_stream_debug.log
+                        
+                        # Accumulate all text with spaces
                         if [ -n "$text" ]; then
-                            last_text="$text"
+                            if [ -n "$current_full_text" ]; then
+                                current_full_text="$current_full_text $text"
+                            else
+                                current_full_text="$text"
+                            fi
+                            echo "[DEBUG] Updated current_full_text: '$current_full_text'" >> /tmp/whisper_stream_debug.log
                         fi
                     fi
                 done
