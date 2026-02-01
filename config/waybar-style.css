@@ -1,0 +1,44 @@
+#custom-whisper {
+    padding: 0 12px;
+    font-size: 14px;
+    color: #8c8985;
+    background-color: #1a1a1a;
+    border-radius: 16px;
+    margin: 4px 3px;
+}
+
+#custom-whisper.ready {
+    color: #8c8985;
+    background-color: #1a1a1a;
+}
+
+#custom-whisper.recording {
+    color: #ff4d4f;
+    background-color: #d4a366;
+}
+
+#custom-whisper.processing {
+    color: #1a1917;
+    background-color: #d4a366;
+}
+
+#custom-whisper.error {
+    color: #f38ba8;
+    opacity: 0.5;
+}
+
+@keyframes pulse {
+    0% {
+        opacity: 1;
+    }
+    50% {
+        opacity: 0.5;
+    }
+    100% {
+        opacity: 1;
+    }
+}
+
+#custom-whisper:hover {
+    background: #45475a;
+}

@@ -1,0 +1,17 @@
+[Unit]
+Description=Whisper Dictation Daemon
+After=sound.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/projects/asahi-whisper-daemon
+ExecStart=%h/projects/asahi-whisper-daemon/.venv/bin/python %h/projects/asahi-whisper-daemon/whisper_daemon.py --model %h/projects/whisper.cpp/models/ggml-base.en.bin --whisper-cli %h/projects/whisper.cpp/build/bin/whisper-cli --no-notifications
+Restart=always
+RestartSec=5
+
+# Wayland environment
+Environment=WAYLAND_DISPLAY=wayland-1
+Environment=XDG_RUNTIME_DIR=/run/user/%U
+
+[Install]
+WantedBy=default.target
