@@ -140,7 +140,7 @@ setup_whisper_cpp() {
     
     if [ -d "$WHISPER_CPP_DIR" ]; then
         log_warn "whisper.cpp directory already exists at $WHISPER_CPP_DIR"
-        if [ -f "$WHISPER_CPP_DIR/main" ]; then
+        if [ -f "$WHISPER_CPP_DIR/build/bin/whisper-cli" ]; then
             log_success "whisper.cpp binary already built"
             return 0
         else
@@ -222,7 +222,7 @@ After=graphical-session.target
 [Service]
 Type=simple
 WorkingDirectory=$DAEMON_DIR
-ExecStart=$DAEMON_DIR/.venv/bin/python $DAEMON_DIR/whisper_daemon.py --model $WHISPER_CPP_DIR/models/ggml-$MODEL_NAME.bin --whisper-cli $WHISPER_CPP_DIR/main
+ExecStart=$DAEMON_DIR/.venv/bin/python $DAEMON_DIR/whisper_daemon.py --model $WHISPER_CPP_DIR/models/ggml-$MODEL_NAME.bin --whisper-cli $WHISPER_CPP_DIR/build/bin/whisper-cli
 Restart=on-failure
 RestartSec=5
 
