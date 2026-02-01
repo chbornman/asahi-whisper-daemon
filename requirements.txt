@@ -1,7 +1,7 @@
-# Audio processing for potential Python wrapper
+# Audio processing
 sounddevice>=0.5.1
 numpy>=2.3.5
 scipy>=1.15.2
 
-# Optional: For building a Python daemon similar to your margo setup
-# pyaudio  # Alternative to sounddevice
+# HTTP requests for server mode
+requests>=2.31.0

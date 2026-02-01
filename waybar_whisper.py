@@ -11,19 +11,56 @@ from pathlib import Path
 
 SOCKET_PATH = "/tmp/whisper_daemon.sock"
 RECORDING_FLAG = "/tmp/whisper_recording"
+STREAMING_FLAG = "/tmp/whisper_streaming"
 SERVICE_FILE = Path.home() / ".config/systemd/user/whisper.service"
 
 # Icons with different states (text-based, no emojis)
-ICONS = {
-    "ready": "●",
-    "recording": "● dictation",
-    "processing": "dictation",
-    "error": "●"
-}
-
-# Animation frames for recording - show "● dictation" when recording
-RECORDING_FRAMES = ["● dictation", "● dictation", "● dictation", "● dictation"]
+# Will be set based on server mode
+ICONS = {}
+RECORDING_FRAMES = []
 frame_index = 0
+
+def get_server_mode():
+    """Check if daemon is running in server mode"""
+    try:
+        if not SERVICE_FILE.exists():
+            return False
+        
+        content = SERVICE_FILE.read_text()
+        return '--server-mode' in content
+    except:
+        return False
+
+def is_streaming():
+    """Check if streaming mode is active"""
+    return Path(STREAMING_FLAG).exists()
+
+def update_icons():
+    """Update icons based on server mode and streaming"""
+    global ICONS, RECORDING_FRAMES
+    
+    # Streaming mode overrides server/CLI mode
+    if is_streaming():
+        icon = "▶"
+        ICONS = {
+            "ready": icon,
+            "recording": f"{icon} streaming",
+            "processing": f"{icon} streaming",
+            "error": icon
+        }
+        RECORDING_FRAMES = [f"{icon} streaming"] * 4
+    else:
+        is_server = get_server_mode()
+        icon = "◆" if is_server else "●"
+        
+        ICONS = {
+            "ready": icon,
+            "recording": f"{icon} dictation",
+            "processing": "dictation",
+            "error": icon
+        }
+        
+        RECORDING_FRAMES = [f"{icon} dictation"] * 4
 
 
 def get_current_model():
@@ -76,32 +113,47 @@ def get_waybar_output():
     """Generate waybar JSON output"""
     global frame_index
     
-    status = get_daemon_status()
-    model = get_current_model()
+    # Update icons based on current mode
+    update_icons()
     
-    # Check recording flag file for processing state
-    if Path(RECORDING_FLAG).exists() and status == "READY":
-        status = "processing"
+    # Check if streaming
+    streaming = is_streaming()
     
-    # Determine icon and tooltip
-    if status == "recording":
-        # Animate while recording
-        icon = RECORDING_FRAMES[frame_index % len(RECORDING_FRAMES)]
-        frame_index += 1
-        tooltip = f"Recording... (SUPER+D to stop)\nModel: {model}\nRight-click to switch model"
-        css_class = "recording"
-    elif status == "processing":
-        icon = ICONS["processing"]
-        tooltip = f"Processing transcription...\nModel: {model}\nRight-click to switch model"
-        css_class = "processing"
-    elif status == "ready":
+    if streaming:
+        # Streaming mode - show stream icon always
         icon = ICONS["ready"]
-        tooltip = f"Ready (SUPER+D to start)\nModel: {model}\nRight-click to switch model"
-        css_class = "ready"
+        tooltip = f"▶ Streaming (VAD mode)\nModel: base.en (streaming)\nSUPER+Shift+D: stop stream"
+        css_class = "streaming"
     else:
-        icon = ICONS["error"]
-        tooltip = f"Daemon not running\nModel: {model}"
-        css_class = "error"
+        # Normal daemon mode
+        status = get_daemon_status()
+        model = get_current_model()
+        is_server = get_server_mode()
+        mode_text = "Server (model in memory)" if is_server else "CLI (loads each time)"
+        
+        # Check recording flag file for processing state
+        if Path(RECORDING_FLAG).exists() and status == "READY":
+            status = "processing"
+        
+        # Determine icon and tooltip
+        if status == "recording":
+            # Animate while recording
+            icon = RECORDING_FRAMES[frame_index % len(RECORDING_FRAMES)]
+            frame_index += 1
+            tooltip = f"Recording... (SUPER+D to stop)\nModel: {model}\nMode: {mode_text}\nRight-click: switch model | SUPER+Shift+D: start stream"
+            css_class = "recording"
+        elif status == "processing":
+            icon = ICONS["processing"]
+            tooltip = f"Processing transcription...\nModel: {model}\nMode: {mode_text}\nRight-click: switch model | SUPER+Shift+D: start stream"
+            css_class = "processing"
+        elif status == "ready":
+            icon = ICONS["ready"]
+            tooltip = f"Ready (SUPER+D to start)\nModel: {model}\nMode: {mode_text}\nRight-click: switch model | SUPER+Shift+D: start stream"
+            css_class = "ready"
+        else:
+            icon = ICONS["error"]
+            tooltip = f"Daemon not running\nModel: {model}\nMode: {mode_text}"
+            css_class = "error"
     
     output = {
         "text": icon,

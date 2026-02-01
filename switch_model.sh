@@ -61,16 +61,29 @@ while IFS= read -r model; do
     fi
 done < <(list_all_models)
 
-# Add separator and download option
+# Add separator and options
 menu_items="${menu_items}---\n"
+
+# Check current mode
+if grep -q "\-\-server-mode" "$SERVICE_FILE"; then
+    menu_items="${menu_items}◆ Toggle to CLI mode (loads model each time)\n"
+else
+    menu_items="${menu_items}● Toggle to Server mode (keeps model in memory)\n"
+fi
+
 menu_items="${menu_items}📥 Download more models...\n"
 
 # Show wofi menu
-selected=$(echo -e "$menu_items" | wofi --dmenu --prompt "Select Whisper Model" --width 400 --height 400 --insensitive)
+selected=$(echo -e "$menu_items" | wofi --dmenu --prompt "Select Whisper Model" --width 450 --height 450 --insensitive)
 
 # Exit if nothing selected
 if [ -z "$selected" ]; then
     exit 0
+fi
+
+# Handle "Toggle to Server/CLI mode" option
+if echo "$selected" | grep -q "Toggle to"; then
+    exec ~/projects/asahi-whisper-daemon/toggle_server_mode.sh
 fi
 
 # Handle "Download more models" option

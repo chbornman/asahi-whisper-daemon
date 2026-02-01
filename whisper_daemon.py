@@ -13,11 +13,18 @@ import subprocess
 import sys
 import tempfile
 import threading
+import time
 from pathlib import Path
 
 import numpy as np
 import scipy.io.wavfile as wavfile
 import sounddevice as sd
+
+try:
+    import requests
+    HAS_REQUESTS = True
+except ImportError:
+    HAS_REQUESTS = False
 
 # Configuration
 SOCKET_PATH = "/tmp/whisper_daemon.sock"
@@ -38,17 +45,20 @@ logger = logging.getLogger(__name__)
 
 
 class WhisperDaemon:
-    def __init__(self, model_path, whisper_cli_path, sound_dir=None, notifications=True):
+    def __init__(self, model_path, whisper_cli_path, sound_dir=None, notifications=True, server_mode=False):
         self.model_path = Path(model_path)
         self.whisper_cli = Path(whisper_cli_path)
         self.sound_dir = Path(sound_dir) if sound_dir else Path(__file__).parent / "sounds"
         self.notifications = notifications
+        self.server_mode = server_mode
         
         # State
         self.recording = False
         self.interrupted = False
         self.audio_queue = queue.Queue()
         self.server_socket = None
+        self.whisper_server_process = None
+        self.server_port = 8080
         
         # Audio feedback
         self.start_sound = None
@@ -69,6 +79,10 @@ class WhisperDaemon:
         self.interrupted = True
         if self.server_socket:
             self.server_socket.close()
+        if self.whisper_server_process:
+            logger.info("Stopping whisper server...")
+            self.whisper_server_process.terminate()
+            self.whisper_server_process.wait(timeout=5)
         sys.exit(0)
     
     def preload_sounds(self):
@@ -186,52 +200,80 @@ class WhisperDaemon:
             wavfile.write(temp_file, SAMPLE_RATE, audio_data)
         
         try:
-            # Run whisper-cli
-            cmd = [
-                str(self.whisper_cli),
-                "-m", str(self.model_path),
-                "-f", temp_file,
-                "-nt",  # No timestamps
-                "--no-prints",  # Minimal output
-            ]
-            
-            result = subprocess.run(
-                cmd,
-                capture_output=True,
-                text=True,
-                timeout=60
-            )
-            
-            # Extract transcription
-            if result.returncode == 0:
-                lines = result.stdout.strip().split('\n')
-                text_lines = [
-                    line.strip() for line in lines 
-                    if line.strip() 
-                    and not line.startswith('whisper_')
-                    and not line.startswith('system_info')
-                    and not line.startswith('main:')
-                ]
-                
-                text = ' '.join(text_lines).strip()
-                
-                if text:
-                    logger.info(f"Transcribed: {text[:50]}...")
-                    self._type_text(text)
-                    self.notify(f"Typed: {text[:40]}...", urgency="low")
-                else:
-                    logger.warning("No speech detected")
-                    self.notify("No speech detected", urgency="critical")
+            if self.server_mode:
+                text = self._transcribe_server(temp_file)
             else:
-                logger.error(f"Transcription failed: {result.stderr}")
+                text = self._transcribe_cli(temp_file)
+            
+            if text:
+                logger.info(f"Transcribed: {text[:50]}...")
+                self._type_text(text)
+                self.notify(f"Typed: {text[:40]}...", urgency="low")
+            else:
+                logger.warning("No speech detected")
+                self.notify("No speech detected", urgency="critical")
         
-        except subprocess.TimeoutExpired:
-            logger.error("Transcription timeout")
         except Exception as e:
             logger.error(f"Transcription error: {e}")
         finally:
             # Clean up
             os.unlink(temp_file)
+    
+    def _transcribe_cli(self, audio_file):
+        """Transcribe using whisper-cli (loads model each time)"""
+        cmd = [
+            str(self.whisper_cli),
+            "-m", str(self.model_path),
+            "-f", audio_file,
+            "-nt",  # No timestamps
+            "--no-prints",  # Minimal output
+        ]
+        
+        result = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            timeout=60
+        )
+        
+        # Extract transcription
+        if result.returncode == 0:
+            lines = result.stdout.strip().split('\n')
+            text_lines = [
+                line.strip() for line in lines 
+                if line.strip() 
+                and not line.startswith('whisper_')
+                and not line.startswith('system_info')
+                and not line.startswith('main:')
+            ]
+            return ' '.join(text_lines).strip()
+        else:
+            logger.error(f"Transcription failed: {result.stderr}")
+            return ""
+    
+    def _transcribe_server(self, audio_file):
+        """Transcribe using whisper-server (model stays in memory)"""
+        try:
+            with open(audio_file, 'rb') as f:
+                files = {'file': ('audio.wav', f, 'audio/wav')}
+                data = {'temperature': '0.0', 'temperature_inc': '0.2', 'response_format': 'json'}
+                
+                response = requests.post(
+                    f"http://127.0.0.1:{self.server_port}/inference",
+                    files=files,
+                    data=data,
+                    timeout=30
+                )
+                
+                if response.status_code == 200:
+                    result = response.json()
+                    return result.get('text', '').strip()
+                else:
+                    logger.error(f"Server returned status {response.status_code}")
+                    return ""
+        except Exception as e:
+            logger.error(f"Server transcription error: {e}")
+            return ""
     
     def _type_text(self, text):
         """Type text using wtype"""
@@ -272,9 +314,71 @@ class WhisperDaemon:
         finally:
             client_socket.close()
     
+    def _start_whisper_server(self):
+        """Start whisper-server subprocess"""
+        if not self.server_mode:
+            return
+        
+        if not HAS_REQUESTS:
+            logger.error("Server mode requires 'requests' library. Install with: uv pip install requests")
+            logger.info("Falling back to CLI mode")
+            self.server_mode = False
+            return
+        
+        # Start whisper-server
+        server_bin = self.whisper_cli.parent / "whisper-server"
+        if not server_bin.exists():
+            logger.error(f"whisper-server not found at {server_bin}")
+            logger.info("Falling back to CLI mode")
+            self.server_mode = False
+            return
+        
+        # Use all available CPU cores for threading
+        import os
+        num_threads = os.cpu_count() or 4
+        
+        cmd = [
+            str(server_bin),
+            "--model", str(self.model_path),
+            "--host", "127.0.0.1",
+            "--port", str(self.server_port),
+            "--threads", str(num_threads),
+            "--processors", "1",  # Keep at 1 - this is for parallel inference, not CPU cores
+            "--no-timestamps"
+        ]
+        
+        logger.info(f"Starting whisper-server on port {self.server_port}...")
+        self.whisper_server_process = subprocess.Popen(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE
+        )
+        
+        # Wait for server to be ready
+        max_wait = 30  # seconds
+        start_time = time.time()
+        while time.time() - start_time < max_wait:
+            try:
+                response = requests.get(f"http://127.0.0.1:{self.server_port}/", timeout=1)
+                if response.status_code in [200, 404]:  # Server is responding
+                    logger.info("Whisper server started successfully")
+                    return
+            except requests.exceptions.RequestException:
+                time.sleep(0.5)
+        
+        logger.error("Whisper server failed to start")
+        logger.info("Falling back to CLI mode")
+        self.server_mode = False
+        if self.whisper_server_process:
+            self.whisper_server_process.kill()
+            self.whisper_server_process = None
+    
     def start(self):
         """Start the daemon"""
         logger.info("Starting Whisper daemon...")
+        
+        # Start whisper server if in server mode
+        self._start_whisper_server()
         
         # Remove existing socket
         if os.path.exists(SOCKET_PATH):
@@ -286,6 +390,7 @@ class WhisperDaemon:
         self.server_socket.listen(5)
         
         logger.info(f"Daemon listening on {SOCKET_PATH}")
+        logger.info(f"Mode: {'SERVER (model in memory)' if self.server_mode else 'CLI (load model each time)'}")
         logger.info("Ready for commands")
         
         # Main loop
@@ -325,6 +430,11 @@ def main():
         action="store_true",
         help="Disable desktop notifications (use with waybar)"
     )
+    parser.add_argument(
+        "--server-mode",
+        action="store_true",
+        help="Use whisper-server (keeps model in memory for faster transcription)"
+    )
     
     args = parser.parse_args()
     
@@ -346,7 +456,8 @@ def main():
         model_path=model_path,
         whisper_cli_path=whisper_cli,
         sound_dir=args.sound_dir,
-        notifications=not args.no_notifications
+        notifications=not args.no_notifications,
+        server_mode=args.server_mode
     )
     daemon.start()
 
