@@ -120,32 +120,56 @@ else
                                     
                                     # Try to find the longest suffix of previous that matches a prefix of current
                                     # We'll do fuzzy matching by comparing words without trailing punctuation
+                                    # Require minimum overlap of 5 words to avoid false positives
+                                    min_overlap_words=5
+                                    
                                     for (( i=${#prev_words[@]}-1; i>=0; i-- )); do
                                         # Extract suffix of previous words starting at position i
                                         prev_suffix_words=("${prev_words[@]:i}")
                                         prev_suffix_len=${#prev_suffix_words[@]}
+                                        
+                                        # Skip if overlap is too short (avoid matching single words)
+                                        if [ "$prev_suffix_len" -lt "$min_overlap_words" ]; then
+                                            continue
+                                        fi
                                         
                                         # Check if current has enough words to match
                                         if [ "$prev_suffix_len" -gt "${#curr_words[@]}" ]; then
                                             continue
                                         fi
                                         
-                                        # Compare the suffix words with current words (fuzzy match on punctuation)
+                                        # Compare the suffix words with current words (fuzzy match with tolerance)
+                                        # Allow up to 2 word mismatches in the sequence
+                                        mismatch_count=0
+                                        max_mismatches=2
                                         match=true
+                                        
                                         for (( j=0; j<prev_suffix_len; j++ )); do
-                                            # Strip trailing punctuation for comparison
+                                            # Strip ALL punctuation and normalize for comparison
+                                            # But keep original words for typing
                                             prev_word="${prev_suffix_words[j]}"
                                             curr_word="${curr_words[j]}"
-                                            prev_word_clean="${prev_word//[.,;:!?\"\']}"
-                                            curr_word_clean="${curr_word//[.,;:!?\"\']}"
+                                            
+                                            # Remove all punctuation (not just trailing), collapse whitespace, lowercase
+                                            prev_word_clean=$(echo "$prev_word" | tr -d '.,;:!?"""'\''()[]{}…—–-' | tr '[:upper:]' '[:lower:]' | tr -s ' ')
+                                            curr_word_clean=$(echo "$curr_word" | tr -d '.,;:!?"""'\''()[]{}…—–-' | tr '[:upper:]' '[:lower:]' | tr -s ' ')
+                                            
+                                            # Skip empty words (pure punctuation like "..." or "...")
+                                            if [ -z "$prev_word_clean" ] || [ -z "$curr_word_clean" ]; then
+                                                continue
+                                            fi
                                             
                                             if [ "$prev_word_clean" != "$curr_word_clean" ]; then
-                                                match=false
-                                                break
+                                                mismatch_count=$((mismatch_count + 1))
+                                                if [ "$mismatch_count" -gt "$max_mismatches" ]; then
+                                                    match=false
+                                                    break
+                                                fi
                                             fi
                                         done
                                         
                                         if [ "$match" = true ]; then
+                                            echo "[DEBUG] Fuzzy match with $mismatch_count mismatches (tolerance: $max_mismatches)" >> /tmp/whisper_stream_debug.log
                                             # Found fuzzy match! Calculate how many words to skip in current
                                             # Reconstruct the actual overlapping text from current (preserving punctuation)
                                             overlap_words=("${curr_words[@]:0:prev_suffix_len}")
