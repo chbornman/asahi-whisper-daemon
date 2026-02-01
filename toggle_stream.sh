@@ -185,10 +185,73 @@ else
                                         fi
                                     done
                                     
+                                    # If forward search didn't find overlap, try bidirectional search
+                                    # Search for any suffix of current that appears in previous
                                     if [ "$overlap_found" = false ]; then
-                                        # No overlap found - type everything (buffer completely shifted)
+                                        echo "[DEBUG] Forward search failed, trying bidirectional search..." >> /tmp/whisper_stream_debug.log
+                                        
+                                        for (( i=${#curr_words[@]}-1; i>=0; i-- )); do
+                                            # Extract suffix of current words starting at position i
+                                            curr_suffix_words=("${curr_words[@]:i}")
+                                            curr_suffix_len=${#curr_suffix_words[@]}
+                                            
+                                            # Skip if overlap is too short
+                                            if [ "$curr_suffix_len" -lt "$min_overlap_words" ]; then
+                                                continue
+                                            fi
+                                            
+                                            # Search for this suffix anywhere in previous text
+                                            # Try each position in previous text
+                                            for (( k=0; k<=${#prev_words[@]}-curr_suffix_len; k++ )); do
+                                                # Extract candidate from previous
+                                                prev_candidate_words=("${prev_words[@]:k:curr_suffix_len}")
+                                                
+                                                # Compare with fuzzy matching
+                                                mismatch_count=0
+                                                max_mismatches=2
+                                                match=true
+                                                
+                                                for (( j=0; j<curr_suffix_len; j++ )); do
+                                                    prev_word="${prev_candidate_words[j]}"
+                                                    curr_word="${curr_suffix_words[j]}"
+                                                    
+                                                    # Normalize both words
+                                                    prev_word_clean=$(echo "$prev_word" | tr -d '.,;:!?"""'\''()[]{}…—–-' | tr '[:upper:]' '[:lower:]' | tr -s ' ')
+                                                    curr_word_clean=$(echo "$curr_word" | tr -d '.,;:!?"""'\''()[]{}…—–-' | tr '[:upper:]' '[:lower:]' | tr -s ' ')
+                                                    
+                                                    # Skip empty words
+                                                    if [ -z "$prev_word_clean" ] || [ -z "$curr_word_clean" ]; then
+                                                        continue
+                                                    fi
+                                                    
+                                                    if [ "$prev_word_clean" != "$curr_word_clean" ]; then
+                                                        mismatch_count=$((mismatch_count + 1))
+                                                        if [ "$mismatch_count" -gt "$max_mismatches" ]; then
+                                                            match=false
+                                                            break
+                                                        fi
+                                                    fi
+                                                done
+                                                
+                                                if [ "$match" = true ]; then
+                                                    # Found overlap! Everything BEFORE position i in current is new
+                                                    new_words=("${curr_words[@]:0:i}")
+                                                    new_text="${new_words[*]}"
+                                                    new_text="${new_text#"${new_text%%[![:space:]]*}"}"
+                                                    new_text="${new_text%"${new_text##*[![:space:]]}"}"
+                                                    overlap_found=true
+                                                    echo "[DEBUG] Bidirectional match: found suffix at position $i of current matching position $k of previous (${curr_suffix_len} words, $mismatch_count mismatches)" >> /tmp/whisper_stream_debug.log
+                                                    echo "[DEBUG] New text from bidirectional: '$new_text'" >> /tmp/whisper_stream_debug.log
+                                                    break 2  # Break out of both loops
+                                                fi
+                                            done
+                                        done
+                                    fi
+                                    
+                                    if [ "$overlap_found" = false ]; then
+                                        # No overlap found even with bidirectional search - type everything
                                         new_text="$current_full_text"
-                                        echo "[DEBUG] No overlap found, typing everything: '$new_text'" >> /tmp/whisper_stream_debug.log
+                                        echo "[DEBUG] No overlap found (tried both directions), typing everything: '$new_text'" >> /tmp/whisper_stream_debug.log
                                     fi
                                 fi
                             else
