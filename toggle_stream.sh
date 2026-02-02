@@ -120,17 +120,17 @@ else
                                     
                                     # Try to find the longest suffix of previous that matches a prefix of current
                                     # We'll do fuzzy matching by comparing words without trailing punctuation
-                                    # Require minimum overlap of 5 words to avoid false positives
+                                    # Start from beginning (longest possible overlap) and find first match
                                     min_overlap_words=5
                                     
-                                    for (( i=${#prev_words[@]}-1; i>=0; i-- )); do
+                                    for (( i=0; i<${#prev_words[@]}; i++ )); do
                                         # Extract suffix of previous words starting at position i
                                         prev_suffix_words=("${prev_words[@]:i}")
                                         prev_suffix_len=${#prev_suffix_words[@]}
                                         
                                         # Skip if overlap is too short (avoid matching single words)
                                         if [ "$prev_suffix_len" -lt "$min_overlap_words" ]; then
-                                            continue
+                                            break  # No point continuing, suffixes only get shorter
                                         fi
                                         
                                         # Check if current has enough words to match
@@ -139,9 +139,11 @@ else
                                         fi
                                         
                                         # Compare the suffix words with current words (fuzzy match with tolerance)
-                                        # Allow up to 2 word mismatches in the sequence
+                                        # Scale mismatches: allow 1 mismatch per 5 words of overlap
                                         mismatch_count=0
-                                        max_mismatches=2
+                                        max_mismatches=$(( prev_suffix_len / 5 ))
+                                        [ "$max_mismatches" -lt 1 ] && max_mismatches=1
+                                        [ "$max_mismatches" -gt 3 ] && max_mismatches=3
                                         match=true
                                         
                                         for (( j=0; j<prev_suffix_len; j++ )); do
@@ -169,7 +171,7 @@ else
                                         done
                                         
                                         if [ "$match" = true ]; then
-                                            echo "[DEBUG] Fuzzy match with $mismatch_count mismatches (tolerance: $max_mismatches)" >> /tmp/whisper_stream_debug.log
+                                            echo "[DEBUG] Fuzzy match with $mismatch_count mismatches (tolerance: $max_mismatches for ${prev_suffix_len} words)" >> /tmp/whisper_stream_debug.log
                                             # Found fuzzy match! Calculate how many words to skip in current
                                             # Reconstruct the actual overlapping text from current (preserving punctuation)
                                             overlap_words=("${curr_words[@]:0:prev_suffix_len}")
@@ -185,73 +187,31 @@ else
                                         fi
                                     done
                                     
-                                    # If forward search didn't find overlap, try bidirectional search
-                                    # Search for any suffix of current that appears in previous
-                                    if [ "$overlap_found" = false ]; then
-                                        echo "[DEBUG] Forward search failed, trying bidirectional search..." >> /tmp/whisper_stream_debug.log
-                                        
-                                        for (( i=${#curr_words[@]}-1; i>=0; i-- )); do
-                                            # Extract suffix of current words starting at position i
-                                            curr_suffix_words=("${curr_words[@]:i}")
-                                            curr_suffix_len=${#curr_suffix_words[@]}
-                                            
-                                            # Skip if overlap is too short
-                                            if [ "$curr_suffix_len" -lt "$min_overlap_words" ]; then
-                                                continue
-                                            fi
-                                            
-                                            # Search for this suffix anywhere in previous text
-                                            # Try each position in previous text
-                                            for (( k=0; k<=${#prev_words[@]}-curr_suffix_len; k++ )); do
-                                                # Extract candidate from previous
-                                                prev_candidate_words=("${prev_words[@]:k:curr_suffix_len}")
-                                                
-                                                # Compare with fuzzy matching
-                                                mismatch_count=0
-                                                max_mismatches=2
-                                                match=true
-                                                
-                                                for (( j=0; j<curr_suffix_len; j++ )); do
-                                                    prev_word="${prev_candidate_words[j]}"
-                                                    curr_word="${curr_suffix_words[j]}"
-                                                    
-                                                    # Normalize both words
-                                                    prev_word_clean=$(echo "$prev_word" | tr -d '.,;:!?"""'\''()[]{}…—–-' | tr '[:upper:]' '[:lower:]' | tr -s ' ')
-                                                    curr_word_clean=$(echo "$curr_word" | tr -d '.,;:!?"""'\''()[]{}…—–-' | tr '[:upper:]' '[:lower:]' | tr -s ' ')
-                                                    
-                                                    # Skip empty words
-                                                    if [ -z "$prev_word_clean" ] || [ -z "$curr_word_clean" ]; then
-                                                        continue
-                                                    fi
-                                                    
-                                                    if [ "$prev_word_clean" != "$curr_word_clean" ]; then
-                                                        mismatch_count=$((mismatch_count + 1))
-                                                        if [ "$mismatch_count" -gt "$max_mismatches" ]; then
-                                                            match=false
-                                                            break
-                                                        fi
-                                                    fi
-                                                done
-                                                
-                                                if [ "$match" = true ]; then
-                                                    # Found overlap! Everything BEFORE position i in current is new
-                                                    new_words=("${curr_words[@]:0:i}")
-                                                    new_text="${new_words[*]}"
-                                                    new_text="${new_text#"${new_text%%[![:space:]]*}"}"
-                                                    new_text="${new_text%"${new_text##*[![:space:]]}"}"
-                                                    overlap_found=true
-                                                    echo "[DEBUG] Bidirectional match: found suffix at position $i of current matching position $k of previous (${curr_suffix_len} words, $mismatch_count mismatches)" >> /tmp/whisper_stream_debug.log
-                                                    echo "[DEBUG] New text from bidirectional: '$new_text'" >> /tmp/whisper_stream_debug.log
-                                                    break 2  # Break out of both loops
-                                                fi
-                                            done
-                                        done
-                                    fi
+                                    # Bidirectional search disabled - caused more problems than it solved
+                                    # (would match wrong positions and output garbage)
                                     
                                     if [ "$overlap_found" = false ]; then
-                                        # No overlap found even with bidirectional search - type everything
-                                        new_text="$current_full_text"
-                                        echo "[DEBUG] No overlap found (tried both directions), typing everything: '$new_text'" >> /tmp/whisper_stream_debug.log
+                                        # No overlap found - instead of typing everything (causes duplication),
+                                        # only type the last sentence or last ~10 words as a conservative fallback
+                                        echo "[DEBUG] No overlap found (forward search only)" >> /tmp/whisper_stream_debug.log
+                                        
+                                        # Try to extract just the last sentence (after last . ! or ?)
+                                        last_sentence=$(echo "$current_full_text" | sed 's/.*[.!?] //' | sed 's/^[[:space:]]*//')
+                                        
+                                        # If last_sentence is same as full text (no sentence break), take last 10 words
+                                        if [ "$last_sentence" = "$current_full_text" ]; then
+                                            IFS=' ' read -ra all_words <<< "$current_full_text"
+                                            if [ ${#all_words[@]} -gt 10 ]; then
+                                                last_words=("${all_words[@]: -10}")
+                                                new_text="${last_words[*]}"
+                                            else
+                                                new_text="$current_full_text"
+                                            fi
+                                            echo "[DEBUG] Fallback: typing last words: '$new_text'" >> /tmp/whisper_stream_debug.log
+                                        else
+                                            new_text="$last_sentence"
+                                            echo "[DEBUG] Fallback: typing last sentence: '$new_text'" >> /tmp/whisper_stream_debug.log
+                                        fi
                                     fi
                                 fi
                             else
@@ -284,6 +244,14 @@ else
                         text="${text%"${text##*[![:space:]]}"}"  # Remove trailing whitespace
                         
                         echo "[DEBUG] Captured timestamp line: '$line'" >> /tmp/whisper_stream_debug.log
+                        
+                        # Filter out noise artifacts (non-speech sounds Whisper hallucinates)
+                        # Matches: (sighs), [silence], *clap*, [BLANK_AUDIO], (keyboard clicking), etc.
+                        if echo "$text" | grep -qiE '^\s*(\(.*\)|\[.*\]|\*.*\*)\s*$'; then
+                            echo "[DEBUG] Filtered noise artifact: '$text'" >> /tmp/whisper_stream_debug.log
+                            text=""
+                        fi
+                        
                         echo "[DEBUG] Extracted text: '$text'" >> /tmp/whisper_stream_debug.log
                         
                         # Accumulate all text with spaces
