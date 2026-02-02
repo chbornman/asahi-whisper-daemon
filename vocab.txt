@@ -1,0 +1,87 @@
+# Developer Vocabulary for Whisper
+# One word/phrase per line, or comma-separated
+# Lines starting with # are comments
+
+# AI/ML Tools
+opencode, Claude, Anthropic, ChatGPT, OpenAI, Copilot, LLM, GPT
+
+# Programming Languages
+Python, JavaScript, TypeScript, Rust, Go, Golang, Ruby, C++, C#, Kotlin, Swift
+Java, PHP, Scala, Elixir, Haskell, Clojure, Lua, Zig, Nim
+
+# Web Frameworks
+React, Next.js, Vue, Nuxt, Angular, Svelte, SvelteKit, Astro
+Django, Flask, FastAPI, Express, Koa, Hono, Bun, Deno
+Rails, Laravel, Spring Boot, ASP.NET
+
+# JavaScript/Node Ecosystem
+npm, yarn, pnpm, Node.js, Vite, Webpack, esbuild, Rollup
+ESLint, Prettier, Babel, SWC, tsx, JSX, ESM, CommonJS
+
+# Python Ecosystem
+pip, uv, conda, venv, virtualenv, Poetry, PDM
+pytest, unittest, mypy, ruff, black, flake8
+NumPy, Pandas, PyTorch, TensorFlow, scikit-learn, Jupyter
+
+# Databases
+PostgreSQL, Postgres, MySQL, MariaDB, SQLite, MongoDB
+Redis, Memcached, Elasticsearch, DynamoDB, Cassandra
+Prisma, Drizzle, SQLAlchemy, Sequelize, TypeORM
+
+# DevOps & Infrastructure
+Docker, Kubernetes, k8s, Terraform, Ansible, Pulumi
+AWS, Azure, GCP, Cloudflare, Vercel, Netlify, Fly.io
+nginx, Apache, Caddy, Traefik, HAProxy
+CI/CD, GitHub Actions, GitLab CI, Jenkins, CircleCI
+
+# Version Control
+Git, GitHub, GitLab, Bitbucket
+git commit, git push, git pull, git merge, git rebase, git stash
+pull request, PR, merge request, MR
+
+# Editors & IDEs
+Neovim, Vim, VS Code, VSCode, Emacs, JetBrains
+IntelliJ, PyCharm, WebStorm, GoLand, RustRover
+LSP, Treesitter, Tree-sitter
+
+# Linux/Unix
+Linux, Ubuntu, Debian, Fedora, Arch, NixOS, Asahi
+bash, zsh, fish, tmux, screen
+systemd, systemctl, journalctl
+grep, sed, awk, curl, wget, jq, ripgrep, fd, fzf
+
+# Desktop/Window Managers
+Sway, Wayland, i3, Hyprland, GNOME, KDE
+Waybar, Wofi, Rofi, Dunst, Mako
+
+# Terminals
+Ghostty, Alacritty, Kitty, WezTerm, iTerm
+
+# Networking & APIs
+REST, GraphQL, gRPC, WebSocket, HTTP, HTTPS
+JSON, YAML, TOML, XML, Protobuf
+API, endpoint, webhook, OAuth, JWT
+
+# Testing
+unit test, integration test, e2e, end-to-end
+Jest, Vitest, Mocha, Chai, Cypress, Playwright, Selenium
+
+# Misc Developer Terms
+localhost, backend, frontend, fullstack, full-stack
+deploy, deployment, staging, production, dev
+refactor, debug, debugger, breakpoint, stack trace
+async, await, promise, callback, closure
+regex, regular expression, glob, wildcard
+
+# Common Abbreviations
+repo, repos, config, configs, env, args, params
+init, src, lib, pkg, deps, dev deps
+docs, README, changelog, TODO, FIXME
+
+# CLI Commands & Flags
+sudo, chmod, chown, mkdir, rm, cp, mv, ls, cd
+--help, --version, --verbose, -v, -h
+stdin, stdout, stderr, pipe, redirect
+
+# Whisper-specific
+whisper, whisper.cpp, transcribe, transcription, speech-to-text
