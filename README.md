@@ -340,16 +340,17 @@ You can adjust VAD sensitivity and buffer behavior by editing `toggle_stream.sh`
 
 **Advanced: Deduplication Algorithm**
 
-The streaming mode uses a smart deduplication algorithm to prevent repeated text:
+The streaming mode uses a character-based deduplication algorithm to prevent repeated text:
 
-1. **Simple prefix matching** - Fast path for continuous speech
-2. **Fuzzy word-based matching** - Handles buffer shifts and punctuation changes
-3. **Automatic context reset** - Clears after 10+ seconds of silence to prevent slowdown
+1. **Committed text tracking** - Tracks what was actually typed, not what Whisper said
+2. **Character-based suffix matching** - Finds overlap using normalized text comparison
+3. **Drift detection** - Detects when Whisper revises earlier text and resets state
+4. **Conservative fallback** - Types only the last sentence when matching fails
 
 This ensures clean output even during:
 - Buffer shifts (when audio window moves forward)
-- Punctuation corrections ("Excellent." → "Excellent,")
-- Apostrophe handling ("it's", "I'm", "you're")
+- Whisper revisions ("gonna" → "going to", "time" → "timing")
+- Word count changes that break word-based alignment
 - Long pauses between thoughts
 
 ### Customizing Waybar Indicator
@@ -454,47 +455,55 @@ Loop (until SUPER+D to stop)
 
 ### Smart Deduplication Algorithm (Streaming Mode)
 
-The streaming mode includes a sophisticated deduplication system to handle whisper.cpp's rolling buffer:
+The streaming mode includes a character-based deduplication system to handle whisper.cpp's rolling buffer:
 
-**Problem**: whisper-stream uses a 30-second sliding window. Each transcription includes previous content plus new speech, causing repetition.
+**Problem**: whisper-stream uses a 30-second sliding window. Each transcription includes previous content plus new speech. Additionally, Whisper frequently revises earlier text ("gonna" → "going to"), which breaks word-based alignment.
 
-**Solution**: Three-tier matching system:
+**Solution**: Character-based committed text tracking:
 
-1. **Simple Prefix Match (Fast Path)**
+1. **Track What We Typed (Not What Whisper Said)**
    ```
-   Previous: "Hello world"
-   Current:  "Hello world this is new"
-   Result:   Types only "this is new" ✓
-   ```
-
-2. **Fuzzy Word-Based Match (Buffer Shifts)**
-   ```
-   Previous: "Let's test if it's working"
-   Current:  "working now with more text"
-   Algorithm: Find longest word sequence overlap
-   Result:   Types only "now with more text" ✓
+   Committed: "Hello world"
+   Current:   "Hello world this is new"
+   Result:    Types only "this is new" ✓
    ```
 
-3. **Punctuation Normalization**
+2. **Character-Based Suffix Matching**
    ```
-   Previous: "Excellent. This is cool."
-   Current:  "Excellent, this is cool. More stuff."
-   Algorithm: Compare words ignoring trailing punctuation
-   Result:   Types only "More stuff." ✓
+   Committed: "I'm gonna tell you a story"
+   Current:   "I'm going to tell you a story about yesterday"
+   Algorithm: Normalize text, find longest suffix overlap
+   Result:    Types only "about yesterday" ✓
+   ```
+   
+   Unlike word-based matching, this handles word count changes gracefully.
+
+3. **Drift Detection & Reset**
+   ```
+   When Whisper revises text significantly:
+   - Track consecutive matching failures
+   - After 2 failures, reset committed_text to current state
+   - Prevents cascading errors from stale state
    ```
 
-**Automatic Context Reset:**
-- Monitors timestamps from whisper output
-- Detects silence gaps > 10 seconds
-- Clears previous context to prevent slowdown
-- Prevents memory buildup in long sessions
+4. **Conservative Fallback**
+   ```
+   When no overlap found:
+   - Type only the last sentence (not everything)
+   - Minimizes duplication on edge cases
+   ```
+
+**Memory Management:**
+- Committed text trimmed to last 500 characters
+- Prevents unbounded memory growth in long sessions
+- Maintains enough context for accurate matching
 
 **Edge Cases Handled:**
-- Apostrophes in contractions (it's, I'm, you're)
-- Whisper's punctuation corrections
+- Word count changes ("gonna" → "going to", "wanna" → "want to")
+- Whisper's text revisions mid-stream
+- Punctuation and capitalization changes
 - Buffer shifts during long dictation
-- Multi-word repetitions
-- Partial word fragments
+- Pauses that cause Whisper to re-interpret earlier speech
 
 ## Performance
 
@@ -629,18 +638,25 @@ echo "STATUS" | ncat -U /tmp/whisper_daemon.sock
 
 **Solutions:**
 1. Check debug log: `tail -f /tmp/whisper_stream_debug.log`
-2. Look for `[DEBUG] Found fuzzy overlap` - this means deduplication is working
-3. Look for `[DEBUG] No overlap found, typing everything` - might indicate buffer shift issues
-4. Restart streaming mode: Press SUPER+D twice (off/on)
-5. If persistent, check for apostrophe handling in log
+2. Look for `[DEBUG] Found overlap` - this means deduplication is working
+3. Look for `[DEBUG] Found committed suffix` - secondary matching worked
+4. Look for `[DEBUG] Resetting committed_text due to drift` - drift detection triggered (normal)
+5. Restart streaming mode: Press SUPER+D twice (off/on)
 
 **Debug example (working correctly):**
 ```
-[DEBUG] Captured timestamp line: '[00:00:00.000 --> 00:00:05.000]   Hello world'
-[DEBUG] Extracted text: 'Hello world'
-[DEBUG] Found fuzzy overlap at word 0 (2 words matched) -> new_text: 'this is new'
+[DEBUG] current_full_text: 'Hello world this is new'
+[DEBUG] committed_text: 'Hello world'
+[DEBUG] Found overlap (cut=0, suffix_len=11, ratio_pos=11) -> new: 'this is new'
 [DEBUG] Typing: 'this is new '
 [DEBUG] wtype succeeded
+```
+
+**Debug example (drift detection working):**
+```
+[DEBUG] No overlap found (fallback_count=2)
+[DEBUG] Resetting committed_text due to drift
+[DEBUG] Fallback new_text: 'just the last sentence.'
 ```
 
 ### Advanced debugging
@@ -706,11 +722,11 @@ The 30-second buffer is a rolling window - older audio gets dropped automaticall
 ### Why do I sometimes see duplicated words?
 
 This can happen when:
-1. **Whisper corrects itself** - Changes "Excellent." to "Excellent," between transcriptions
-2. **You pause mid-sentence** - VAD might transcribe partial thoughts
-3. **Buffer shifts** - Should be rare with our fuzzy matching algorithm
+1. **Whisper revises earlier text** - Changes "gonna" to "going to" or "time" to "timing"
+2. **You pause mid-sentence** - VAD might transcribe partial thoughts, then revise
+3. **Drift accumulation** - After several revisions, committed text diverges from Whisper's state
 
-If you see consistent duplication, check `/tmp/whisper_stream_debug.log` and report an issue.
+The drift detection system (added in v2) handles most cases by resetting state after consecutive failures. If you see consistent duplication, check `/tmp/whisper_stream_debug.log` and report an issue.
 
 ### What happens if I pause for a long time?
 
